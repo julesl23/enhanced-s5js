@@ -14,6 +14,21 @@
   --sl-color-accent-high: #0a3d2c;
 }
 
+/* Official "Built on Sia" badge (see docs.sia.tech brand guidelines): the
+   dark-artwork variant shows on the light theme and vice versa. */
+.built-on-sia {
+  margin-top: 2.5rem;
+  text-align: center;
+}
+
+[data-theme='light'] .sia-badge-on-dark {
+  display: none;
+}
+
+:root:not([data-theme='light']) .sia-badge-on-light {
+  display: none;
+}
+
 /* Slightly tighter hero on the landing page. */
 .hero {
   padding-block: 2rem;
