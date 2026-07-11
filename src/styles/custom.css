@@ -1,0 +1,25 @@
+/* Enhanced s5.js brand accent — a green nodding to the Sia ecosystem. */
+
+/* Dark mode colors. */
+:root {
+  --sl-color-accent-low: #0e3327;
+  --sl-color-accent: #12805c;
+  --sl-color-accent-high: #8fe6c4;
+}
+
+/* Light mode colors. */
+:root[data-theme='light'] {
+  --sl-color-accent-low: #c9f2e0;
+  --sl-color-accent: #0d7a55;
+  --sl-color-accent-high: #0a3d2c;
+}
+
+/* Slightly tighter hero on the landing page. */
+.hero {
+  padding-block: 2rem;
+}
+
+.hero .tagline {
+  max-width: 42rem;
+  margin-inline: auto;
+}

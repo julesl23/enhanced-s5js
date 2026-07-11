@@ -1,0 +1,89 @@
+---
+title: Enhanced s5.js
+description: TypeScript SDK for the S5 decentralized storage network — path-based file API, media processing, HAMT-scaled directories, and content-addressed storage.
+template: splash
+hero:
+  tagline: A comprehensive TypeScript SDK for the S5 decentralized storage network. Path-based file operations, client-side media processing, directories that scale to millions of entries — in a 61 KB bundle.
+  actions:
+    - text: Quick Start
+      link: /quick-start/
+      icon: right-arrow
+    - text: API Reference
+      link: /api-reference/
+      variant: minimal
+      icon: open-book
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+	<Card title="Path-based API" icon="document">
+		Familiar filesystem-like operations — `get`, `put`, `delete`, `list` — with automatic CBOR
+		encoding, cursor pagination, and Unicode paths. [Learn more](/path-api/)
+	</Card>
+	<Card title="Scales to millions of entries" icon="rocket">
+		Automatic HAMT sharding kicks in at 1,000+ entries per directory, keeping operations
+		O(log n) where flat directories become impractical. [Performance](/performance/)
+	</Card>
+	<Card title="Data safety, taken seriously" icon="approve-check">
+		A typed error contract (`S5DirectoryLoadError`) distinguishes "temporarily unavailable"
+		from "genuinely absent", so transient network failures can never silently orphan your
+		data. [Error handling](/path-api/#error-handling)
+	</Card>
+	<Card title="Cross-identity sharing" icon="magnifier">
+		Read another user's public directory tree and subscribe to live updates over a shared
+		public key — no identity required on the reader side. [Cross-identity](/cross-identity/)
+	</Card>
+	<Card title="Client-side media processing" icon="seti:image">
+		Thumbnail generation and image metadata extraction in the browser, WASM-powered with
+		Canvas fallback — lazy-loadable at just 9.79 KB. [Media](/media/)
+	</Card>
+	<Card title="Content-addressed storage" icon="setting">
+		CID extraction, verification, and public download by CID with BLAKE3 hash checking,
+		for power users building distributed systems. [Advanced CID API](/advanced-cid/)
+	</Card>
+</CardGrid>
+
+## Install
+
+```bash
+npm install @julesl23/s5js@beta
+```
+
+```typescript
+import { S5 } from '@julesl23/s5js';
+
+const s5 = await S5.create({
+  initialPeers: ['wss://z2DWuPbL5pweybXnEB618pMnV58ECj2VPDNfVGm3tFqBvjF@s5.ninja/s5/p2p'],
+});
+await s5.recoverIdentityFromSeedPhrase(seedPhrase);
+
+await s5.fs.put('home/hello.txt', 'Hello, S5!');
+const content = await s5.fs.get('home/hello.txt');
+```
+
+## Used By
+
+<CardGrid>
+	<Card title="Platformless AI" icon="star">
+		A decentralized peer-to-peer network for accessing AI models without trusting a
+		centralized company — trustless, private, censorship-resistant, with storage built on
+		Enhanced s5.js. [platformlessai.org](https://www.platformlessai.org/)
+	</Card>
+	<Card title="Chi Voice" icon="comment">
+		A Sia Foundation grant project building a community-collected audio dataset of
+		underrepresented and indigenous languages, using Enhanced s5.js for content-addressed
+		uploads to Sia. [chivr.tech](https://chivr.tech/) ·
+		[GitHub](https://github.com/Chi-voice/chivr)
+	</Card>
+</CardGrid>
+
+Building something with Enhanced s5.js?
+[Open an issue](https://github.com/julesl23/s5.js/issues) to get it listed here.
+
+---
+
+Enhanced s5.js is created and maintained by **Jules Lai**, founder of
+[Fabstir](https://fabstir.com). Developed under a [Sia Foundation](https://sia.tech/) grant
+and actively maintained — see the [changelog](/changelog/) for the full release history,
+currently at **v0.9.0-beta.50** with **581 tests passing**.

@@ -1,0 +1,222 @@
+---
+title: 'Changelog'
+description: 'Release history for Enhanced s5.js.'
+---
+
+All notable changes to Enhanced s5.js will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+Post-grant releases are summarised below. For exhaustive per-version notes (including production-hardening fixes across beta.2–beta.44), see [`docs/POST_GRANT_UPDATE.md`](https://github.com/julesl23/s5.js/blob/main/docs/POST_GRANT_UPDATE.md).
+
+## [0.9.0-beta.50] - 2026-06-15
+
+### Fixed
+
+- **Critical data-loss fix — `ensureIdentityInitialized` no longer orphans the filesystem on a transient root-load 404.** A momentary blob 404 during a routine login could make the root load as a synthetic *empty* directory, so `ensureIdentityInitialized` saw `home`/`archive` "missing" and re-published them empty at a valid next revision — silently orphaning the entire user subtree. Fixed with three independent layers:
+  - **`_fetchDirectoryMetadata` no longer fakes "empty" on a 404.** A 404 of a *known* directory blob now throws a retryable `S5DirectoryLoadError` (the legacy behaviour is gated behind an off-by-default `allowEmptyOn404` no caller sets). The transaction retry loop handles transient cases; a persistent 404 surfaces as an error, never a wipe.
+  - **`ensureIdentityInitialized({ repair? })` only initialises a genuinely new root.** It heals a partial root (exactly one of `home`/`archive` present), but a root that exists yet has *neither* throws a **non-retryable** error (opt-in `{ repair: true }` heal) instead of recreating both.
+  - **`_createDirectory` never overwrites a live directory** — it links to an existing non-empty directory (or refuses on a 404) instead of republishing an empty blob.
+
+### Added
+
+- **`S5DirectoryLoadError`** (exported from `@julesl23/s5js`, `/core`, `/advanced`) with `retryable: boolean`, stable `code === "S5_DIRECTORY_LOAD_ERROR"`, and the `isS5DirectoryLoadError()` type guard. Consumers MUST treat `retryable` as "retry with backoff", never as "absent/empty".
+
+### Changed
+
+- **Typed retryable errors now propagate uniformly to consumers.** `fs.get()` throws on a transient 404 of a known directory (was silent `undefined`); a genuinely-absent directory (no registry entry) still returns `undefined`. Writes (`put`/`delete`/`createDirectory`/`createFile`) reject with the same typed error via `DirectoryTransactionResult.unwrap()`. `DirectoryWalker` and `BatchOperations.copyDirectory`/`deleteDirectory` re-throw a retryable error instead of silently reporting an incomplete walk/copy/delete as success. HAMT shard-root and internal-node blob 404s, and file-content blob 404s, are typed the same way.
+
+> Consumer-side rollout: honour `retryable` (retry/backoff, never catch-and-treat-as-empty); `connect()` must fail-and-retry rather than proceed "logged in but empty." See `docs/development/MESSAGE-S5-DEVELOPER-DATALOSS-FIX.md`.
+
+## [0.9.0-beta.49] - 2026-05-23
+
+### Changed
+
+- **Directory-Metadata Cache** — `FS5._getDirectoryMetadata()` now has an instance-scoped, read-through cache keyed by the directory's registry public key. Reads sharing a path prefix fetch each ancestor **once** instead of re-walking the whole prefix over the network on every read. Measured on a real consumer page: a 6-read landing page **36s → 6.5s (5.6×)**; a multi-creator page **53 → 29 directory loads**.
+  - **In-flight coalescing**: N concurrent reads of the same uncached directory share ONE network load (the cache slot holds the pending promise, populated synchronously before the first `await`).
+  - **`s5.fs` is now memoized** — the getter previously returned a new `FS5` on every access, so the cache (and the per-directory mutex) only helped callers that happened to reuse one reference. It now returns a stable instance, dropped on identity recovery so a new identity never serves another's cached directories. **Behavior change:** `s5.fs === s5.fs` now holds.
+  - **Correctness**: the write path's revision read bypasses the cache (`{ fresh: true }`) so each retry reads a live revision; every `registrySet` invalidates only the written directory's key (siblings/ancestors stay valid). Misses and the synthetic empty-dir-on-blob-404 are never cached.
+
+### Added
+
+- `directoryCacheTtlMs` option on `S5.create(...)` and `new FS5(api, identity, { directoryCacheTtlMs })` (default **30s**) to tune the cross-identity staleness window.
+- 11 new tests — 9 cache (hit/coalescing, write-path correctness, miss/404/TTL policy) + 2 `s5.fs` memoization/teardown (total: **559** passing).
+
+### Notes
+
+- Purely additive to the public API except the `s5.fs` identity (now a stable reference); no protocol or serialization changes.
+- HAMT is unaffected: the cache holds only the `DirV1` + registry entry; HAMT nodes load downstream from the returned (content-addressed, immutable) DirV1.
+
+## [0.9.0-beta.47] - 2026-04-19
+
+### Added
+
+- **Cross-Identity Directory Key Lookup** — `FS5.getPublicDirectoryKeyFrom(remotePubKey, subpath)` resolves the 32-byte Ed25519 registry pubkey for any sub-directory under another user's public tree. Returned pubkey is ready to pass to `api.registryListen(pk)` for push-based live subscriptions (no polling). No identity required on the caller side.
+- Empty subpath (`""` or `"/"`) returns the input `remotePubKey` unchanged (pass-through).
+- 8 new tests (total: 548 passing).
+
+### Notes
+
+- Purely additive; no breaking changes, no protocol changes.
+- Returns `undefined` for missing segments, file-as-final, `fixed_hash_blake3` links, or encrypted intermediates.
+- Throws on invalid `remotePubKey` length (must be exactly 32 bytes).
+
+## [0.9.0-beta.46] - 2026-04-09
+
+### Added
+
+- **Cross-Identity Public Directory Read** — two new `FS5` methods enable multi-user data sharing via a shared Ed25519 public key:
+  - `getPublicDirectoryKey(path)` — extract the 32-byte registry pubkey for one of your own directories (requires identity).
+  - `readFromPublicDirectory(remotePubKey, subpath)` — read file content from another user's unencrypted directory tree (no identity required for the reader).
+- Supports nested subpaths and both Map- and HAMT-backed directories.
+- 11 new tests (total: 540 passing).
+
+### Notes
+
+- Purely additive; no breaking changes. FS5 child directories were already stored unencrypted, so no encryption changes were needed.
+
+## [0.9.0-beta.45] - 2026-04-03
+
+### Changed
+
+- **Per-Directory Mutex** — concurrent `fs.put()` calls to the same directory now serialize via a keyed `AsyncMutex`, eliminating retry cascades (30–65s → 2–10s under contention). Different directories remain fully parallel. Zero external dependencies, automatic lock release on error.
+
+### Added
+
+- 123 concurrency tests and 108 mutex unit tests.
+
+## [0.9.0-beta.1] - 2025-10-31
+
+### Major Features - Sia Foundation Grant Implementation
+
+This release represents the culmination of an 8-month Sia Foundation grant to enhance s5.js with a comprehensive set of features for decentralized storage applications.
+
+#### Path-based API (Phases 2-3)
+- **Added** simplified filesystem API with `get()`, `put()`, `delete()`, `list()`, and `getMetadata()` operations
+- **Added** automatic path normalization and Unicode support
+- **Added** CBOR-based DirV1 directory format for deterministic serialization
+- **Added** DAG-CBOR encoding for cross-implementation compatibility
+- **Added** cursor-based pagination for efficient large directory iteration
+- **Added** directory creation and management utilities
+
+#### HAMT Sharding (Phase 3)
+- **Added** Hash Array Mapped Trie (HAMT) for scalable directory storage
+- **Added** automatic sharding at 1000+ entries per directory
+- **Added** 32-way branching with xxhash64 distribution
+- **Added** transparent fallback between flat and sharded directories
+- **Added** O(log n) performance for directories with millions of entries
+
+#### Directory Utilities (Phase 4)
+- **Added** `DirectoryWalker` class for recursive directory traversal
+- **Added** configurable depth limits and filtering options
+- **Added** resumable traversal with cursor support
+- **Added** `BatchOperations` class for high-level copy/delete operations
+- **Added** progress tracking and error handling for batch operations
+
+#### Media Processing (Phases 5-6)
+- **Added** `MediaProcessor` for image metadata extraction
+- **Added** WebAssembly (WASM) based image processing with Canvas fallback
+- **Added** automatic browser capability detection
+- **Added** support for JPEG, PNG, WebP formats
+- **Added** thumbnail generation with smart cropping
+- **Added** dominant color extraction and color palette generation
+- **Added** progressive image loading support
+- **Added** FS5 integration: `putImage()`, `getThumbnail()`, `getImageMetadata()`, `createImageGallery()`
+
+#### Advanced CID API (Phase 6)
+- **Added** `FS5Advanced` class for content-addressed operations
+- **Added** `pathToCID()` - convert filesystem paths to CIDs
+- **Added** `cidToPath()` - resolve CIDs to filesystem paths
+- **Added** `getByCID()` - retrieve data directly by CID
+- **Added** `putByCID()` - store data with explicit CID
+- **Added** CID utility functions: `formatCID()`, `parseCID()`, `verifyCID()`, `cidToString()`
+- **Added** 74 comprehensive tests for CID operations
+
+#### Bundle Optimization (Phase 6)
+- **Added** modular exports for code-splitting
+- **Added** `@s5-dev/s5js` - full bundle (61 KB brotli)
+- **Added** `@s5-dev/s5js/core` - core functionality without media (60 KB)
+- **Added** `@s5-dev/s5js/media` - media processing standalone (10 KB)
+- **Added** `@s5-dev/s5js/advanced` - core + CID utilities (61 KB)
+- **Achievement**: 61 KB compressed - **10× under the 700 KB grant requirement**
+
+#### Testing & Documentation (Phases 7-8)
+- **Added** 437 comprehensive tests across all features
+- **Added** real S5 portal integration testing (s5.vup.cx)
+- **Added** browser compatibility testing (Chrome, Firefox, Safari)
+- **Added** performance benchmarks for HAMT operations
+- **Added** comprehensive API documentation
+- **Added** getting-started tutorial and demo scripts
+- **Added** mdBook documentation for docs.sfive.net integration
+
+### Core Improvements
+
+#### Compatibility
+- **Fixed** browser bundling by removing Node.js-specific dependencies
+- **Fixed** replaced undici with native `globalThis.fetch` for universal compatibility
+- **Added** support for Node.js 18+ native fetch API
+- **Added** dual browser/Node.js environment support
+
+#### Architecture
+- **Added** dual MIT/Apache-2.0 licensing matching s5-rs ecosystem
+- **Improved** TypeScript type definitions and IDE support
+- **Improved** error handling and validation across all APIs
+- **Improved** test coverage to 437 tests passing
+
+#### Bundle Exports
+- **Fixed** export architecture to properly include all functionality
+- **Fixed** advanced bundle now correctly includes core features
+- **Fixed** media bundle can be used standalone or lazy-loaded
+
+### Breaking Changes
+
+- **Path API**: New primary interface for file operations (legacy CID-based API still available)
+- **Directory Format**: Uses DirV1 CBOR format (not compatible with old MessagePack format)
+- **Package Name**: Published as `@s5-dev/s5js` (replaces `s5-js`)
+- **Node.js**: Requires Node.js 20+ (for native fetch support)
+
+### Grant Context
+
+This release fulfills Milestones 2-8 of the Sia Foundation grant for Enhanced s5.js:
+- **Month 2-3**: Path-based API and HAMT integration
+- **Month 4**: Directory utilities (walker, batch operations)
+- **Month 5**: Media processing foundation
+- **Month 6**: Advanced media features and CID API
+- **Month 7**: Testing and performance validation
+- **Month 8**: Documentation and upstream integration
+
+**Total Grant Value**: $49,600 USD (8 months × $6,200/month)
+
+### Performance
+
+- **HAMT Sharding**: O(log n) operations on directories with millions of entries
+- **Bundle Size**: 61 KB (brotli) - 10× under budget
+- **Cursor Pagination**: Memory-efficient iteration over large directories
+- **Media Processing**: Thumbnail generation in ~50ms (WASM) or ~100ms (Canvas)
+
+### Known Limitations
+
+- Browser tests require Python 3 for local HTTP server
+- WebAssembly media processing requires modern browser support
+- HAMT sharding threshold set at 1000 entries (configurable)
+
+### Contributors
+
+- **Jules Lai (julesl23)** - Grant implementation
+- **redsolver** - Original s5.js architecture and guidance
+- **Lume Web** - S5 protocol development
+
+### Links
+
+- **Grant Proposal**: Sia Foundation Grant - Enhanced s5.js
+- **API Documentation**: [docs/API.md](https://github.com/julesl23/s5.js/blob/main/docs/API.md)
+- **Testing Guide**: [docs/testing/MILESTONE5_TESTING_GUIDE.md](https://github.com/julesl23/s5.js/blob/main/docs/testing/MILESTONE5_TESTING_GUIDE.md)
+- **Bundle Analysis**: [docs/BUNDLE_ANALYSIS.md](https://github.com/julesl23/s5.js/blob/main/docs/BUNDLE_ANALYSIS.md)
+- **Benchmarks**: [docs/BENCHMARKS.md](https://github.com/julesl23/s5.js/blob/main/docs/BENCHMARKS.md)
+
+---
+
+## Pre-Grant History
+
+For changes prior to the Enhanced s5.js grant project, see the original s5.js repository history.
